@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import PropTypes from 'prop-types'
 import Alert from '@mui/material/Alert'
 import Box from '@mui/material/Box'
@@ -51,7 +51,9 @@ export default function ProjectFormDialog({ project = null, onClose }) {
   const toast = useToast()
   const isEditing = Boolean(project)
   const isSubmitting = createProject.isPending || updateProject.isPending
-
+  const handleOwnerChange = useCallback((id) => {
+    setForm((prev) => (prev.owner_id === id ? prev : { ...prev, owner_id: id }))
+  }, [])
   const setField = (field) => (event) => setForm((prev) => ({ ...prev, [field]: event.target.value }))
 
   const handleSubmit = async (event) => {
@@ -132,7 +134,7 @@ export default function ProjectFormDialog({ project = null, onClose }) {
             <ResourcePicker
               label="Owner"
               value={form.owner_id}
-              onChange={(id) => setForm((prev) => ({ ...prev, owner_id: id }))}
+              onChange={handleOwnerChange}
             />
             <Grid container spacing={2}>
               <Grid size={6}>
