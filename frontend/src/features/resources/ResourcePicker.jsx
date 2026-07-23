@@ -27,7 +27,19 @@ export default function ResourcePicker({
       value={selected}
       disabled={disabled}
       onChange={(_event, option) => onChange(option ? option.id : null)}
-      onInputChange={(_event, newInput) => setInputValue(newInput)}
+      onInputChange={(_event, newInput, reason) => {
+        // MUI fires this on every text sync, not just real typing: 'selectOption'
+        // when it writes the selected option's label into the input after a pick,
+        // 'reset' on blur-close/value-prop sync, 'blur' on losing focus. Treating
+        // those like a keystroke re-triggered the debounced search with the full
+        // "Name (email)" label, refetching and flickering the list on every
+        // selection. Only 'input' is a real keystroke; 'clear' is the (x) button.
+        if (reason === 'input') {
+          setInputValue(newInput)
+        } else if (reason === 'clear') {
+          setInputValue('')
+        }
+      }}
       getOptionLabel={(option) => `${option.full_name} (${option.email})`}
       isOptionEqualToValue={(option, current) => option.id === current.id}
       renderInput={(params) => (
