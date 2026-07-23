@@ -24,4 +24,10 @@ jobs:
         run: pip3 install bandit
 
       - name: Run Bandit
-        run: bandit -r ./backend
+        # Excludes test directories - bandit's B101 (assert_used) flags every
+        # plain `assert` in our pytest suites (backend/{_shared,*-service}/tests/),
+        # which is how pytest assertions work, not a real finding. Verified
+        # directly: scanning a clean checkout (git archive HEAD, matching what
+        # this job actually sees - no vendored deps or .venv) finds these are
+        # the *only* issues bandit reports; zero remain outside tests/ dirs.
+        run: bandit -r ./backend --exclude '*/tests/*,**/test_*.py'
