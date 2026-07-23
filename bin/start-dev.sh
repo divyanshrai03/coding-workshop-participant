@@ -339,8 +339,16 @@ for req in "$PROJECT_ROOT"/backend/*/requirements.txt; do
         continue
     fi
     echo -e "  Installing pip requirements for $(basename "$svc_dir")..."
-    pip install --quiet --target="$svc_dir" -r "$req" 2>/dev/null || true
-    echo "$REQS_HASH" > "$HASH_FILE"
+    # python3.13 -m pip (not a bare "pip"), matching the Lambda runtime in infra/locals.tf -
+    # LocalStack's hot-reload mode serves code straight from this directory on disk, so a
+    # dependency installed under the wrong Python ABI (e.g. this box's default pip resolving
+    # to 3.14) produces a package the 3.13 runtime can't import, failing with a misleading
+    # "No module named X" only once a cold Lambda container actually needs it.
+    if python3.13 -m pip install --quiet --target="$svc_dir" -r "$req"; then
+        echo "$REQS_HASH" > "$HASH_FILE"
+    else
+        echo "  ERROR: pip install failed for $(basename "$svc_dir") - not marking as installed." >&2
+    fi
 done
 
 # Install npm dependencies into each Node.js service directory for hot-reload

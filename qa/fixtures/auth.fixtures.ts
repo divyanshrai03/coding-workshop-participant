@@ -44,6 +44,52 @@ export async function storageStateForRole(role: Role): Promise<BrowserContextOpt
   };
 }
 
+/**
+ * Seeds a session with a real, valid refresh_token but a garbage access_token -
+ * used to prove apiClient's reactive 401-refresh-and-retry flow (frontend/src/lib/apiClient.js)
+ * works against the real backend, not just the mocked version already unit-tested
+ * in apiClient.test.js.
+ */
+export async function storageStateWithExpiredAccessToken(role: Role): Promise<BrowserContextOptions['storageState']> {
+  const session = await loginViaApi(role);
+  return {
+    cookies: [],
+    origins: [
+      {
+        origin: env.UI_BASE_URL,
+        localStorage: [
+          {
+            name: 'pm_platform_auth',
+            value: JSON.stringify({ ...session, access_token: 'not-a-real-access-token' }),
+          },
+        ],
+      },
+    ],
+  };
+}
+
+/** Seeds a session where neither token is valid - both /me and the resulting /refresh must fail. */
+export function storageStateWithNoValidSession(): BrowserContextOptions['storageState'] {
+  return {
+    cookies: [],
+    origins: [
+      {
+        origin: env.UI_BASE_URL,
+        localStorage: [
+          {
+            name: 'pm_platform_auth',
+            value: JSON.stringify({
+              access_token: 'not-a-real-access-token',
+              refresh_token: 'not-a-real-refresh-token',
+              user: { id: '00000000-0000-0000-0000-000000000000', full_name: 'Ghost User', role: 'viewer' },
+            }),
+          },
+        ],
+      },
+    ],
+  };
+}
+
 type Fixtures = {
   role: Role;
   authenticatedPage: Page;

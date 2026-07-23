@@ -11,6 +11,10 @@ test-results/
 playwright-report/
 blob-report/
 
+# JMeter output (regenerated on every run - see perf/login-dashboard-load-test.jmx)
+perf/reports/*
+!perf/reports/.gitkeep
+
 # Local environment overrides
 .env
 .env.local

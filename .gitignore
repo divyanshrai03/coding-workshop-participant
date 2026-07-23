@@ -258,5 +258,19 @@ tfplan
 # (see infra/lambda.tf null_resource.sync_shared_lib) — generated, not source
 backend/*/_lib/
 
+# pip dependencies vendored directly into each Python service's own root by
+# bin/start-dev.sh (LocalStack hot-reload serves code straight from this path,
+# so dependencies must live alongside function.py, not just in the deploy zip)
+backend/*/psycopg/
+backend/*/psycopg_binary/
+backend/*/psycopg_binary.libs/
+backend/*/psycopg-*.dist-info/
+backend/*/psycopg_binary-*.dist-info/
+backend/*/jwt/
+backend/*/PyJWT-*.dist-info/
+backend/*/bcrypt/
+backend/*/bcrypt.libs/
+backend/*/bcrypt-*.dist-info/
+
 # Snyk Security Extension - AI Rules (auto-generated)
 .github/instructions/snyk_rules.instructions.md

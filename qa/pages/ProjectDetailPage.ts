@@ -15,12 +15,20 @@ export class ProjectDetailPage extends BasePage {
     return this.page.getByRole('button', { name: 'Back to projects' });
   }
 
+  /**
+   * getByRole('button', { name: 'Edit' }) is ambiguous once any deliverable
+   * row exists: each row also has an icon-only "Edit"/"Delete" button whose
+   * accessible name comes from an aria-label, not visible text, but role+name
+   * matching doesn't distinguish the two. `hasText` filters on actual text
+   * content, which only the page-level button (labeled Button, not IconButton)
+   * has - the row buttons render an icon with no visible text at all.
+   */
   get editButton() {
-    return this.page.getByRole('button', { name: 'Edit' });
+    return this.page.getByRole('button').filter({ hasText: 'Edit' });
   }
 
   get deleteButton() {
-    return this.page.getByRole('button', { name: 'Delete' });
+    return this.page.getByRole('button').filter({ hasText: 'Delete' });
   }
 
   get setUpBudgetButton() {

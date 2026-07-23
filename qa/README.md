@@ -66,6 +66,17 @@ npm run test:debug      # Playwright inspector
 npm run report          # open the last HTML report
 ```
 
+## Reports
+
+- **Playwright** (this suite): `npm run report` opens the last HTML report
+  (`reports/html-report/`); raw JSON is written to `reports/results.json`.
+  Both are regenerated on every run and gitignored.
+- **Backend unit/DB tests** (`../backend`): `cd ../backend && .venv/bin/pytest
+  --cov=_shared --cov-report=html` writes a coverage report to
+  `../backend/htmlcov/index.html`.
+- **Performance** (JMeter, `../qa/perf/`): `reports/html/index.html` after
+  running `login-dashboard-load-test.jmx` (see `perf/` for the command).
+
 ## Known environment notes
 
 - **WebKit** requires system libraries (`libflite`, `libavif`, `libx264`, and
@@ -78,7 +89,4 @@ npm run report          # open the last HTML report
 - The CI workflow (`.github/workflows/playwright.yml`) installs and runs this
   suite but does **not** currently start the application stack itself
   (LocalStack, Postgres, the frontend/backend). It assumes a stack is already
-  reachable at `UI_BASE_URL`/`API_BASE_URL`. Wiring that up is a Phase 8+
-  concern once there's a real suite worth gating merges on.
-- No feature test files exist yet (this is Phase 2 — framework scaffolding
-  only). `npx playwright test` will currently report "no tests found."
+  reachable at `UI_BASE_URL`/`API_BASE_URL`.

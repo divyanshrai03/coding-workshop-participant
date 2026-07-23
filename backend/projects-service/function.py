@@ -23,6 +23,7 @@ field set (progress reporting) rather than a hierarchy cutoff.
 import logging
 import os
 import sys
+from decimal import Decimal
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "_lib"))
 
@@ -83,6 +84,20 @@ def _with_completion(row: dict) -> dict:
     total = row.get("deliverable_count") or 0
     completed = row.get("completed_count") or 0
     row["completion_percent"] = round((completed / total) * 100) if total else 0
+    return row
+
+
+def _with_budget_summary(row: dict) -> dict:
+    """Adds remaining_amount/percent_used alongside the raw planned/spent amounts
+    get_project() already selects - mirrors budgets-service's own _with_budget_math().
+    Only get_project() calls this: list_projects()'s rows never select budget_id in
+    the first place, so row.get("budget_id") is safely None there.
+    """
+    if row.get("budget_id"):
+        planned = row.get("planned_amount") or Decimal(0)
+        spent = row.get("spent_amount") or Decimal(0)
+        row["remaining_amount"] = planned - spent
+        row["percent_used"] = round(float(spent / planned) * 100, 1) if planned else None
     return row
 
 
@@ -201,7 +216,7 @@ def get_project(id, headers, **_):
 
     if not project:
         raise NotFoundError("Project not found")
-    return success(_with_completion(project))
+    return success(_with_budget_summary(_with_completion(project)))
 
 
 def update_project(id, body, headers, **_):

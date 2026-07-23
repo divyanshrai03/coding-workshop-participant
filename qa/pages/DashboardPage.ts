@@ -36,6 +36,19 @@ export class DashboardPage extends BasePage {
     return this.page.getByRole('button', { name: 'View budgets' });
   }
 
+  /** Reads a StatCard's <h4> value by its overline label (e.g. "Total projects"). */
+  statValue(label: string) {
+    return this.page.getByText(label, { exact: true }).locator('xpath=following-sibling::h4');
+  }
+
+  get budgetOverviewText() {
+    return this.page.getByText(/of .* spent/);
+  }
+
+  overallocatedChip(fullName: string) {
+    return this.page.getByRole('button', { name: new RegExp(`^${fullName} ·`) });
+  }
+
   async open(): Promise<void> {
     await this.goto('/dashboard');
     await this.heading.waitFor({ state: 'visible' });
