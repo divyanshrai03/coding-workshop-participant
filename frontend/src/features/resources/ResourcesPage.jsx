@@ -36,16 +36,26 @@ import ResourceAssignmentsDialog from './ResourceAssignmentsDialog'
 
 function SummaryCard({ label, value, icon: Icon }) {
   return (
-    <Card variant="outlined" sx={{ height: '100%' }}>
+    <Card
+      variant="outlined"
+      sx={{
+        height: '100%',
+        transition: (theme) => theme.transitions.create(['box-shadow', 'transform'], { duration: 150 }),
+        '&:hover': {
+          boxShadow: (theme) => (theme.palette.mode === 'dark' ? 'none' : '0 8px 24px rgba(15, 23, 42, 0.08)'),
+          transform: 'translateY(-2px)',
+        },
+      }}
+    >
       <CardContent>
         <Stack direction="row" spacing={1.5} alignItems="center">
           <Box sx={{ p: 1, borderRadius: 2, bgcolor: 'action.hover', display: 'flex' }}>
             <Icon fontSize="small" color="action" />
           </Box>
           <Box>
-            <Typography variant="h5" fontWeight={700}>
-              {value}
-            </Typography>
+            {/* Matches DashboardPage's StatCard value styling (h4) - the same
+                "big KPI number" role should look identical everywhere. */}
+            <Typography variant="h4">{value}</Typography>
             <Typography variant="caption" color="text.secondary">
               {label}
             </Typography>
@@ -98,16 +108,16 @@ export default function ResourcesPage() {
 
       {summary && (
         <Grid container spacing={2.5} sx={{ mb: 3 }}>
-          <Grid size={{ xs: 6, sm: 3 }}>
+          <Grid size={{ xs: 12, sm: 6, md: 3 }}>
             <SummaryCard label="Total resources" value={summary.total_resources} icon={GroupsOutlinedIcon} />
           </Grid>
-          <Grid size={{ xs: 6, sm: 3 }}>
+          <Grid size={{ xs: 12, sm: 6, md: 3 }}>
             <SummaryCard label="Overallocated" value={summary.overallocated_count} icon={WorkOutlineOutlinedIcon} />
           </Grid>
-          <Grid size={{ xs: 6, sm: 3 }}>
+          <Grid size={{ xs: 12, sm: 6, md: 3 }}>
             <SummaryCard label="Under 50% allocated" value={summary.underallocated_count} icon={WorkOutlineOutlinedIcon} />
           </Grid>
-          <Grid size={{ xs: 6, sm: 3 }}>
+          <Grid size={{ xs: 12, sm: 6, md: 3 }}>
             <SummaryCard
               label="Average allocation"
               value={`${summary.average_allocation_percent}%`}

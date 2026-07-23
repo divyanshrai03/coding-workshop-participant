@@ -27,14 +27,22 @@ const RISK_CHART_COLORS = { low: '#16A34A', medium: '#2563EB', high: '#D97706', 
 
 function StatCard({ label, value, caption = null }) {
   return (
-    <Card variant="outlined" sx={{ height: '100%' }}>
+    <Card
+      variant="outlined"
+      sx={{
+        height: '100%',
+        transition: (theme) => theme.transitions.create(['box-shadow', 'transform'], { duration: 150 }),
+        '&:hover': {
+          boxShadow: (theme) => (theme.palette.mode === 'dark' ? 'none' : '0 8px 24px rgba(15, 23, 42, 0.08)'),
+          transform: 'translateY(-2px)',
+        },
+      }}
+    >
       <CardContent>
         <Typography variant="overline" color="text.secondary">
           {label}
         </Typography>
-        <Typography variant="h4" fontWeight={700}>
-          {value}
-        </Typography>
+        <Typography variant="h4">{value}</Typography>
         {caption && (
           <Typography variant="caption" color="text.secondary">
             {caption}
@@ -103,20 +111,20 @@ export default function DashboardPage() {
       />
 
       <Grid container spacing={2.5} sx={{ mb: 3 }}>
-        <Grid size={{ xs: 6, sm: 3 }}>
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
           <StatCard label="Total projects" value={summary.total_projects} />
         </Grid>
-        <Grid size={{ xs: 6, sm: 3 }}>
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
           <StatCard label="Active" value={summary.projects_by_status.active ?? 0} />
         </Grid>
-        <Grid size={{ xs: 6, sm: 3 }}>
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
           <StatCard
             label="Delayed"
             value={summary.delayed_project_count}
             caption={summary.delayed_project_count > 0 ? 'past due date' : 'on track'}
           />
         </Grid>
-        <Grid size={{ xs: 6, sm: 3 }}>
+        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
           <StatCard
             label="Deliverable completion"
             value={`${summary.deliverable_completion_percent}%`}
