@@ -66,7 +66,8 @@ mapping = {
     "password": "POSTGRES_PASS",
 }
 for key, env_name in mapping.items():
-    print(f"export {env_name}={shlex.quote(str(d.get(key, \"\")))}")
+    value = shlex.quote(str(d.get(key, "")))
+    print(f"export {env_name}={value}")
 ')
     eval "$ENV_EXPORTS"
 
