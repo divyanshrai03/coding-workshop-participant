@@ -57,7 +57,7 @@ module "lambda" {
 
   tags = local.app_tags
 
-  depends_on = [null_resource.java_build]
+  depends_on = [null_resource.java_build, null_resource.sync_shared_lib]
 }
 
 resource "aws_sqs_queue" "this" {
@@ -90,6 +90,23 @@ resource "null_resource" "hot_reload" {
   }
 
   depends_on = [module.lambda, aws_s3_bucket.hot_reload]
+}
+
+resource "null_resource" "sync_shared_lib" {
+  for_each = local.backend_names_python
+
+  triggers = {
+    shared_lib_hash = local.shared_lib_hash
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      mkdir -p ${each.value.path}/_lib
+      find ${each.value.path}/_lib -mindepth 1 -delete
+      find ${path.module}/../backend/_shared -maxdepth 1 -name '*.py' ! -name 'migrate.py' \
+        -exec cp {} ${each.value.path}/_lib/ \;
+    EOT
+  }
 }
 
 resource "null_resource" "java_build" {

@@ -1,0 +1,28 @@
+{
+  "name": "qa",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Playwright automation, API, integration, and regression suite for ACME Projects",
+  "scripts": {
+    "test": "playwright test",
+    "test:ui": "playwright test --project=chromium --project=firefox --project=webkit",
+    "test:chromium": "playwright test --project=chromium",
+    "test:firefox": "playwright test --project=firefox",
+    "test:webkit": "playwright test --project=webkit",
+    "test:api": "playwright test --project=api",
+    "test:integration": "playwright test --project=integration",
+    "test:smoke": "playwright test --grep @smoke",
+    "test:regression": "playwright test --grep @regression",
+    "test:headed": "playwright test --headed",
+    "test:debug": "playwright test --debug",
+    "report": "playwright show-report reports/html-report",
+    "codegen": "playwright codegen",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.1",
+    "@types/node": "^26.1.1",
+    "dotenv": "^17.4.2",
+    "typescript": "^7.0.2"
+  }
+}

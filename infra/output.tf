@@ -45,3 +45,15 @@ output "jupyter_url" {
   description = "The URL of the JupyterHub instance"
   value       = data.aws_caller_identity.this.id == "000000000000" ? "http://localhost:8888" : try("https://${one(aws_eks_cluster.this.*.endpoint)}", null)
 }
+
+output "postgres_connection" {
+  description = "Aurora PostgreSQL connection details, consumed by bin/migrate-db.sh"
+  sensitive   = true
+  value = {
+    host     = try(one(aws_rds_cluster.this.*.endpoint), "")
+    port     = try(one(aws_rds_cluster.this.*.port), "")
+    database = try(one(aws_rds_cluster.this.*.database_name), "")
+    username = try(one(aws_rds_cluster.this.*.master_username), "")
+    password = try(one(aws_rds_cluster.this.*.master_password), "")
+  }
+}

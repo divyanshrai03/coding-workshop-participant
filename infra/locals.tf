@@ -59,10 +59,17 @@ locals {
       runtime          = "python3.13"
       handler          = "function.handler"
       path             = abspath(format("%s/../backend/%s", path.module, name))
-      patterns         = ["!__pycache__/.*", "!\\..*"]
+      patterns         = ["!__pycache__/.*", "!\\..*", "!_lib/__pycache__/.*"]
       pip_requirements = true
     }
   }
+  # Hash of backend/_shared/*.py contents, used to re-sync the shared library
+  # (db/auth/http/validation/router helpers) into every Python service's
+  # _lib/ directory whenever it changes. See null_resource.sync_shared_lib.
+  shared_lib_files = fileset(format("%s/../backend/_shared", path.module), "*.py")
+  shared_lib_hash = md5(join("", [
+    for f in local.shared_lib_files : filesha1(format("%s/../backend/_shared/%s", path.module, f))
+  ]))
   data_dirs_python = [
     for file in fileset(format("%s/../data", path.module), "*/requirements.txt") :
     dirname(file) if !startswith(dirname(file), "_") && !startswith(dirname(file), ".")
@@ -112,6 +119,7 @@ locals {
     MONGO_NAME    = data.aws_caller_identity.this.id == "000000000000" ? "mongo" : try(one(aws_docdb_cluster.this.*.database_name), "")
     MONGO_USER    = data.aws_caller_identity.this.id == "000000000000" ? "" : try(one(aws_docdb_cluster.this.*.master_username), "")
     MONGO_PASS    = data.aws_caller_identity.this.id == "000000000000" ? "" : try(one(aws_docdb_cluster.this.*.master_password), "")
+    JWT_SECRET    = random_password.jwt_secret.result
   }
   lambda_role_arn = format(
     "arn:%s:iam::%s:role/%s-lambda-%s-%s",

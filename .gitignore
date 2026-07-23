@@ -254,5 +254,9 @@ tfplan
 # Config files (might contain sensitive info)
 *.config
 
+# backend/_shared/*.py synced into each Python service by Terraform
+# (see infra/lambda.tf null_resource.sync_shared_lib) — generated, not source
+backend/*/_lib/
+
 # Snyk Security Extension - AI Rules (auto-generated)
 .github/instructions/snyk_rules.instructions.md

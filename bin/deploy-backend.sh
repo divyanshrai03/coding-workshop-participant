@@ -71,6 +71,16 @@ if [ "$ENVIRONMENT" = "aws" ]; then
         echo "WARN: $ENVIRONMENT_CONFIG is missing"
     fi
 else
+    # Local development still needs PARTICIPANT_ID/TF_VAR_aws_app_code from
+    # ENVIRONMENT.config so resource naming (which embeds aws_app_code) matches
+    # whatever start-dev.sh / generate-env.sh already produced - otherwise every
+    # resource gets replaced under the fallback "abcd1234" app code. Credentials
+    # are overridden for LocalStack immediately after, so loading this first is safe.
+    if [ -f "$ENVIRONMENT_CONFIG" ]; then
+        echo "INFO: Loading participant environment configuration..."
+        source $ENVIRONMENT_CONFIG
+    fi
+
     # Local development configuration — override credentials for LocalStack
     export AWS_ENDPOINT_URL="http://localhost.localstack.cloud:4566"
     export AWS_ENDPOINT_URL_S3="http://s3.localhost.localstack.cloud:4566"

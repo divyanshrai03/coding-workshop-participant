@@ -91,7 +91,8 @@ const server = http.createServer((req, res) => {
   delete headers['sec-fetch-mode'];
   delete headers['sec-fetch-dest'];
 
-  // Keep only essential headers
+  // Keep only essential headers - authorization must be forwarded so JWT-protected
+  // endpoints work through the local proxy, not just in the real CloudFront/browser path.
   const options = {
     hostname: target.hostname,
     port: target.port,
@@ -101,6 +102,7 @@ const server = http.createServer((req, res) => {
       'accept': headers.accept || 'application/json',
       'content-type': headers['content-type'] || 'application/json',
       'user-agent': headers['user-agent'] || 'proxy-server',
+      ...(headers.authorization ? { authorization: headers.authorization } : {}),
       'host': target.host
     }
   };

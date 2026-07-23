@@ -1,0 +1,18 @@
+node_modules/
+
+# Playwright output (regenerated on every run)
+reports/*
+!reports/.gitkeep
+screenshots/*
+!screenshots/.gitkeep
+videos/*
+!videos/.gitkeep
+test-results/
+playwright-report/
+blob-report/
+
+# Local environment overrides
+.env
+.env.local
+
+*.log
