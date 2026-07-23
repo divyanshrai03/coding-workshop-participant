@@ -3,10 +3,14 @@ import { Link as RouterLink, useNavigate } from 'react-router-dom'
 import Alert from '@mui/material/Alert'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
+import IconButton from '@mui/material/IconButton'
+import InputAdornment from '@mui/material/InputAdornment'
 import Link from '@mui/material/Link'
 import Stack from '@mui/material/Stack'
 import TextField from '@mui/material/TextField'
 import Typography from '@mui/material/Typography'
+import VisibilityOutlinedIcon from '@mui/icons-material/VisibilityOutlined'
+import VisibilityOffOutlinedIcon from '@mui/icons-material/VisibilityOffOutlined'
 import { useAuth } from './useAuth'
 import { ApiError } from '../../lib/apiClient'
 import { useToast } from '../../components/useToast'
@@ -18,6 +22,7 @@ export default function RegisterPage() {
   const toast = useToast()
   const navigate = useNavigate()
   const [form, setForm] = useState(INITIAL_FORM)
+  const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
 
@@ -73,13 +78,33 @@ export default function RegisterPage() {
         />
         <TextField
           label="Password"
-          type="password"
+          type={showPassword ? 'text' : 'password'}
           value={form.password}
           onChange={handleChange('password')}
           required
           fullWidth
           autoComplete="new-password"
           helperText="At least 8 characters"
+          slotProps={{
+            input: {
+              endAdornment: (
+                <InputAdornment position="end">
+                  <IconButton
+                    aria-label={showPassword ? 'Hide characters' : 'Show characters'}
+                    onClick={() => setShowPassword((prev) => !prev)}
+                    edge="end"
+                    size="small"
+                  >
+                    {showPassword ? (
+                      <VisibilityOffOutlinedIcon fontSize="small" />
+                    ) : (
+                      <VisibilityOutlinedIcon fontSize="small" />
+                    )}
+                  </IconButton>
+                </InputAdornment>
+              ),
+            },
+          }}
         />
         <Button type="submit" variant="contained" size="large" disabled={isSubmitting} fullWidth>
           {isSubmitting ? 'Creating account…' : 'Create account'}

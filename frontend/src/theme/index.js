@@ -109,11 +109,25 @@ export function createAppTheme(mode) {
             borderRadius: 8,
             padding: '8px 16px',
             minHeight: 40,
+            transition: 'background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease, transform 80ms ease',
+            '&:active': { transform: 'scale(0.97)' },
           },
           sizeSmall: { padding: '6px 12px', minHeight: 34 },
           sizeLarge: { padding: '10px 20px', minHeight: 48 },
           contained: {
             '&:hover': { boxShadow: 'none' },
+          },
+          // Default MUI icons (24px) read as oversized/misaligned next to the
+          // 15px button label - applies to every startIcon/endIcon button
+          // app-wide (e.g. the "New Project"/"New Budget" pattern), not a
+          // per-page fix, matching the theme-first approach used elsewhere.
+          startIcon: {
+            marginRight: 6,
+            '& > *:nth-of-type(1)': { fontSize: 18 },
+          },
+          endIcon: {
+            marginLeft: 6,
+            '& > *:nth-of-type(1)': { fontSize: 18 },
           },
         },
       },
