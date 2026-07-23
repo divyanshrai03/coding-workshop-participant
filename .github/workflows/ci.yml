@@ -12,6 +12,11 @@ env:
   AWS_REGION: us-east-1
   AWS_ENDPOINT_URL: http://localhost:4566
   AWS_ENDPOINT_URL_S3: http://s3.localhost.localstack.cloud:4566
+  # Defined at workflow level (not job/step level) specifically so
+  # jobs.e2e-tests.if below can reference it via the `env` context - the
+  # `secrets` context isn't allowed directly inside `if:` conditions, and
+  # job-level `env:` isn't resolved yet when a job's own `if:` is evaluated.
+  LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}
 
 jobs:
   # --- Backend unit + DB integrity tests (pytest) -----------------------------
@@ -97,7 +102,7 @@ jobs:
   e2e-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    if: ${{ secrets.LOCALSTACK_AUTH_TOKEN != '' }}
+    if: ${{ env.LOCALSTACK_AUTH_TOKEN != '' }}
 
     services:
       postgres:
@@ -129,8 +134,8 @@ jobs:
           terraform_wrapper: false
 
       - name: Start LocalStack
-        env:
-          LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}
+        # LOCALSTACK_AUTH_TOKEN is already in scope via the workflow-level env:
+        # block above - no need to redeclare it here.
         run: |
           docker run -d --name localstack-main \
             -p 4566:4566 \
