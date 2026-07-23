@@ -1,0 +1,211 @@
+name: Test Suite
+
+on: [pull_request, push]
+
+env:
+  AWS_ACCESS_KEY_ID: test
+  AWS_SECRET_ACCESS_KEY: test
+  AWS_REGION: us-east-1
+  AWS_ENDPOINT_URL: http://localhost:4566
+  AWS_ENDPOINT_URL_S3: http://s3.localhost.localstack.cloud:4566
+
+jobs:
+  # --- Backend unit + DB integrity tests (pytest) -----------------------------
+  # Only needs a real Postgres - no LocalStack/Lambda involved (db.py connects
+  # directly), so this job stays fast and independent of the e2e job below.
+  backend-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres123
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Apply database migrations
+        run: ./bin/migrate-db.sh local
+
+      - name: Install backend dev/test dependencies
+        run: |
+          python3.13 -m venv backend/.venv
+          backend/.venv/bin/pip install --quiet -r backend/requirements-dev.txt
+
+      - name: Run pytest with coverage
+        working-directory: ./backend
+        run: .venv/bin/pytest --cov=_shared --cov-report=term-missing -v
+
+  # --- Frontend unit tests (Vitest) -------------------------------------------
+  frontend-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        working-directory: ./frontend
+        run: npm install
+
+      - name: Lint
+        working-directory: ./frontend
+        run: npm run lint
+
+      - name: Run tests
+        working-directory: ./frontend
+        run: npm test
+
+  # --- End-to-end (Playwright UI + API) ---------------------------------------
+  # Needs the full local stack: Postgres, LocalStack (Lambda + S3), Terraform-
+  # deployed backend, the Vite dev server, and the local CORS proxy - the same
+  # stack bin/start-dev.sh brings up for local development, reusing its
+  # component scripts (migrate-db.sh, deploy-backend.sh, generate-env.sh)
+  # directly rather than start-dev.sh itself, which assumes an interactive,
+  # already-provisioned machine (brew/systemctl, MongoDB this app doesn't use).
+  #
+  # Requires a LOCALSTACK_AUTH_TOKEN repository secret (Settings > Secrets and
+  # variables > Actions) - even LocalStack's "community" image now refuses to
+  # start without a valid license token (verified directly: it exits with
+  # "License activation failed" otherwise), matching why bin/start-dev.sh pins
+  # localstack/localstack-pro and docs/validation.md has participants export
+  # this token locally. Use the same per-participant token from that doc. This
+  # job is skipped (not failed) when the secret isn't configured, so backend
+  # and frontend unit tests still gate every push/PR on their own.
+  e2e-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: ${{ secrets.LOCALSTACK_AUTH_TOKEN != '' }}
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres123
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Start LocalStack
+        env:
+          LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}
+        run: |
+          docker run -d --name localstack-main \
+            -p 4566:4566 \
+            -e LOCALSTACK_AUTH_TOKEN \
+            -e SERVICES=lambda,s3,iam,sts,logs \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            localstack/localstack-pro:latest
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:4566/_localstack/health && break
+            echo "Waiting for LocalStack... ($i/30)"; sleep 2
+          done
+
+      - name: Apply database migrations
+        run: ./bin/migrate-db.sh local
+
+      - name: Vendor Python dependencies into each service directory
+        # LocalStack's hot-reload always activates for local (account 000000000000)
+        # deployments (infra/lambda.tf's null_resource.hot_reload), which serves code
+        # straight from these directories on disk - the deploy zip's bundled deps are
+        # bypassed. python3.13 (not a bare "pip"/"python3") matches the Lambda runtime;
+        # see bin/start-dev.sh for the same step and why it must be this specific
+        # interpreter (a version mismatch here fails Lambda cold starts with a
+        # misleading "No module named X").
+        run: |
+          for req in backend/*/requirements.txt; do
+            svc_dir="$(dirname "$req")"
+            python3.13 -m pip install --quiet --target="$svc_dir" -r "$req"
+          done
+
+      - name: Deploy backend to LocalStack
+        run: ./bin/deploy-backend.sh local
+
+      - name: Generate frontend environment config
+        run: ./bin/generate-env.sh
+
+      - name: Install frontend dependencies
+        working-directory: ./frontend
+        run: npm install
+
+      - name: Start frontend dev server + CORS proxy
+        run: |
+          nohup npm --prefix frontend run dev > /tmp/vite.log 2>&1 &
+          nohup node bin/proxy-server.js > /tmp/proxy.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:3000 > /dev/null && curl -sf -o /dev/null -w '%{http_code}' http://localhost:3001/api/auth-service/users | grep -q 401 && break
+            echo "Waiting for frontend/proxy... ($i/30)"; sleep 2
+          done
+
+      - name: Install qa dependencies
+        working-directory: ./qa
+        run: npm install
+
+      - name: Install Playwright browsers
+        working-directory: ./qa
+        run: npx playwright install --with-deps
+
+      - name: Run UI tests
+        working-directory: ./qa
+        run: npm run test:ui
+        env:
+          CI: true
+
+      - name: Run API tests
+        working-directory: ./qa
+        run: npm run test:api
+        env:
+          CI: true
+
+      - name: Dump stack logs on failure
+        if: failure()
+        run: |
+          echo "--- vite.log ---"; cat /tmp/vite.log || true
+          echo "--- proxy.log ---"; cat /tmp/proxy.log || true
+          echo "--- localstack logs ---"; docker logs localstack-main --tail 100 || true
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: qa/reports/html-report/
+          retention-days: 14
