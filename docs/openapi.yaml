@@ -1,0 +1,1196 @@
+openapi: 3.0.3
+info:
+  title: ACME Projects API
+  description: >
+    REST API for the ACME Projects platform: authentication/users, projects,
+    deliverables, dependencies, resource assignments, and budgets. Backed by
+    four independent Python Lambda services (auth-service, projects-service,
+    resources-service, budgets-service) sharing one PostgreSQL database.
+
+    All endpoints except POST /auth-service/register (only when bootstrapping
+    the very first user) and POST /auth-service/login require a bearer access
+    token. Write access is further gated by role, per endpoint below. Role
+    hierarchy, most to least privileged:
+    admin > project_manager > team_lead > developer > viewer.
+  version: "1.0.0"
+servers:
+  - url: https://d2n4j70lfegfu7.cloudfront.net/api
+    description: Deployed (AWS CloudFront, routes to Lambda Function URLs per service)
+  - url: http://localhost:3001/api
+    description: Local development (bin/proxy-server.js in front of LocalStack)
+
+tags:
+  - name: Auth
+    description: Registration, login, tokens, and user management (auth-service)
+  - name: Projects
+    description: Project CRUD and the portfolio dashboard (projects-service)
+  - name: Deliverables
+    description: Deliverables within a project (projects-service)
+  - name: Dependencies
+    description: Dependency edges between deliverables (projects-service)
+  - name: Resources
+    description: Team roster and workload (resources-service)
+  - name: Assignments
+    description: Assigning people to projects/deliverables (resources-service)
+  - name: Budgets
+    description: Budget planning and spend tracking (budgets-service)
+
+security:
+  - bearerAuth: []
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Access token from POST /auth-service/login or /refresh. 30-minute TTL.
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            message:
+              type: string
+            details:
+              type: object
+              nullable: true
+
+    Role:
+      type: string
+      enum: [admin, project_manager, team_lead, developer, viewer]
+
+    User:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        full_name: { type: string }
+        role: { $ref: '#/components/schemas/Role' }
+        capacity_hours_per_week: { type: number, format: float, example: 40 }
+        is_active: { type: boolean }
+        created_at: { type: string, format: date-time }
+
+    AuthTokens:
+      type: object
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+
+    ProjectStatus:
+      type: string
+      enum: [planning, active, on_hold, completed, cancelled]
+
+    RiskLevel:
+      type: string
+      enum: [low, medium, high, critical]
+
+    Project:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string, nullable: true }
+        status: { $ref: '#/components/schemas/ProjectStatus' }
+        risk_level: { $ref: '#/components/schemas/RiskLevel' }
+        owner_id: { type: string, format: uuid, nullable: true }
+        owner_name: { type: string, nullable: true }
+        start_date: { type: string, format: date, nullable: true }
+        end_date: { type: string, format: date, nullable: true }
+        created_by: { type: string, format: uuid, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        deliverable_count: { type: integer }
+        completed_count: { type: integer }
+        completion_percent: { type: integer }
+        is_delayed: { type: boolean }
+        budget_id: { type: string, format: uuid, nullable: true }
+        planned_amount: { type: number, nullable: true }
+        currency: { type: string, nullable: true }
+        spent_amount: { type: number, nullable: true }
+        remaining_amount: { type: number, nullable: true }
+        percent_used: { type: number, nullable: true }
+
+    DeliverableStatus:
+      type: string
+      enum: [not_started, in_progress, in_review, completed, blocked]
+
+    Deliverable:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string, nullable: true }
+        status: { $ref: '#/components/schemas/DeliverableStatus' }
+        owner_id: { type: string, format: uuid, nullable: true }
+        owner_name: { type: string, nullable: true }
+        due_date: { type: string, format: date, nullable: true }
+        completed_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        blocked_by:
+          type: array
+          items: { $ref: '#/components/schemas/DependencyEdge' }
+        blocking:
+          type: array
+          items: { $ref: '#/components/schemas/DependencyEdge' }
+
+    DependencyType:
+      type: string
+      enum: [blocks, related]
+
+    DependencyEdge:
+      type: object
+      description: One side of a deliverable's dependency graph, as returned inside GET /deliverables/{id}.
+      properties:
+        id: { type: string, format: uuid }
+        dependency_type: { $ref: '#/components/schemas/DependencyType' }
+        deliverable_id: { type: string, format: uuid }
+        name: { type: string }
+        status: { $ref: '#/components/schemas/DeliverableStatus' }
+
+    Dependency:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        deliverable_id: { type: string, format: uuid }
+        depends_on_deliverable_id: { type: string, format: uuid }
+        dependency_type: { $ref: '#/components/schemas/DependencyType' }
+        created_at: { type: string, format: date-time }
+
+    Resource:
+      type: object
+      description: A user, viewed as a resource with computed current workload.
+      properties:
+        id: { type: string, format: uuid }
+        full_name: { type: string }
+        email: { type: string, format: email }
+        role: { $ref: '#/components/schemas/Role' }
+        capacity_hours_per_week: { type: number }
+        is_active: { type: boolean }
+        total_allocation_percent: { type: integer }
+        is_overallocated: { type: boolean }
+        allocated_hours_per_week: { type: number, nullable: true }
+
+    Assignment:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        project_name: { type: string }
+        deliverable_id: { type: string, format: uuid, nullable: true }
+        deliverable_name: { type: string, nullable: true }
+        user_id: { type: string, format: uuid }
+        user_full_name: { type: string }
+        allocation_percent: { type: integer, minimum: 1, maximum: 100 }
+        role_on_project: { type: string, nullable: true }
+        start_date: { type: string, format: date, nullable: true }
+        end_date: { type: string, format: date, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    Budget:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        project_name: { type: string }
+        planned_amount: { type: number }
+        currency: { type: string, example: USD }
+        spent_amount: { type: number }
+        remaining_amount: { type: number }
+        percent_used: { type: number, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    BudgetEntry:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        budget_id: { type: string, format: uuid }
+        category: { type: string }
+        description: { type: string, nullable: true }
+        amount: { type: number }
+        entry_date: { type: string, format: date }
+        created_by: { type: string, format: uuid, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    PaginationMeta:
+      type: object
+      properties:
+        page: { type: integer }
+        page_size: { type: integer }
+        total: { type: integer }
+
+  parameters:
+    PageParam:
+      name: page
+      in: query
+      schema: { type: integer, default: 1 }
+    PageSizeParam:
+      name: page_size
+      in: query
+      schema: { type: integer, default: 20, maximum: 100 }
+    SortParam:
+      name: sort
+      in: query
+      description: Column name, optionally prefixed with '-' for descending (e.g. "-created_at").
+      schema: { type: string }
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid bearer token
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: Authenticated, but the caller's role doesn't permit this action
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: No resource with the given id
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ValidationError:
+      description: Request failed validation
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: Request conflicts with existing state
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+paths:
+  # --- Auth --------------------------------------------------------------
+  /auth-service/register:
+    post:
+      tags: [Auth]
+      summary: Register a user
+      description: >
+        The very first user in the system bootstraps as 'admin' with no auth
+        required. Every subsequent registration requires an authenticated
+        admin caller and an explicit role.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, full_name]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 8 }
+                full_name: { type: string }
+                role: { $ref: '#/components/schemas/Role' }
+      responses:
+        '201':
+          description: User created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { data: { $ref: '#/components/schemas/User' } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /auth-service/login:
+    post:
+      tags: [Auth]
+      summary: Log in
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+      responses:
+        '200':
+          description: Authenticated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      user: { $ref: '#/components/schemas/User' }
+                      access_token: { type: string }
+                      refresh_token: { type: string }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /auth-service/refresh:
+    post:
+      tags: [Auth]
+      summary: Exchange a refresh token for a new token pair
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: { type: string }
+      responses:
+        '200':
+          description: New token pair
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { data: { $ref: '#/components/schemas/AuthTokens' } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /auth-service/me:
+    get:
+      tags: [Auth]
+      summary: Get the authenticated caller's own profile
+      responses:
+        '200':
+          description: Caller's profile
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { data: { $ref: '#/components/schemas/User' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /auth-service/users:
+    get:
+      tags: [Auth]
+      summary: List users (admin only)
+      parameters:
+        - name: role
+          in: query
+          schema: { $ref: '#/components/schemas/Role' }
+        - name: is_active
+          in: query
+          schema: { type: boolean }
+        - name: search
+          in: query
+          description: Matches against full_name or email
+          schema: { type: string }
+        - $ref: '#/components/parameters/SortParam'
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PageSizeParam'
+      responses:
+        '200':
+          description: List of users
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/User' } }
+                  meta: { $ref: '#/components/schemas/PaginationMeta' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /auth-service/users/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Auth]
+      summary: Get a user (self or admin)
+      responses:
+        '200':
+          description: User
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { data: { $ref: '#/components/schemas/User' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Auth]
+      summary: Update a user
+      description: >
+        Self may update full_name/capacity_hours_per_week. Admins may
+        additionally update role/is_active for any user.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                full_name: { type: string }
+                capacity_hours_per_week: { type: number }
+                role: { $ref: '#/components/schemas/Role' }
+                is_active: { type: boolean }
+      responses:
+        '200':
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { data: { $ref: '#/components/schemas/User' } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Auth]
+      summary: Deactivate a user (admin only, soft delete)
+      description: Admins cannot deactivate their own account.
+      responses:
+        '204': { description: Deactivated }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # --- Projects ------------------------------------------------------------
+  /projects-service/dashboard/summary:
+    get:
+      tags: [Projects]
+      summary: Portfolio-wide health aggregate for the dashboard
+      responses:
+        '200':
+          description: Dashboard summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      total_projects: { type: integer }
+                      projects_by_status: { type: object }
+                      projects_by_risk: { type: object }
+                      delayed_project_count: { type: integer }
+                      total_deliverables: { type: integer }
+                      completed_deliverables: { type: integer }
+                      deliverable_completion_percent: { type: integer }
+                      budget_planned: { type: number }
+                      budget_spent: { type: number }
+                      upcoming_deadlines: { type: array, items: { type: object } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /projects-service/projects:
+    get:
+      tags: [Projects]
+      summary: List projects
+      parameters:
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/ProjectStatus' }
+        - name: risk_level
+          in: query
+          schema: { $ref: '#/components/schemas/RiskLevel' }
+        - name: owner_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: search
+          in: query
+          schema: { type: string }
+        - name: delayed
+          in: query
+          description: "'true' to filter to overdue, non-terminal projects"
+          schema: { type: boolean }
+        - $ref: '#/components/parameters/SortParam'
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PageSizeParam'
+      responses:
+        '200':
+          description: List of projects
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Project' } }
+                  meta: { $ref: '#/components/schemas/PaginationMeta' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+    post:
+      tags: [Projects]
+      summary: Create a project (project_manager+)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                description: { type: string }
+                status: { $ref: '#/components/schemas/ProjectStatus' }
+                risk_level: { $ref: '#/components/schemas/RiskLevel' }
+                owner_id: { type: string, format: uuid }
+                start_date: { type: string, format: date }
+                end_date: { type: string, format: date }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { data: { $ref: '#/components/schemas/Project' } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /projects-service/projects/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Projects]
+      summary: Get a project's detail, including completion % and budget summary
+      responses:
+        '200':
+          description: Project detail
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { data: { $ref: '#/components/schemas/Project' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Projects]
+      summary: Update a project (project_manager+)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                description: { type: string }
+                status: { $ref: '#/components/schemas/ProjectStatus' }
+                risk_level: { $ref: '#/components/schemas/RiskLevel' }
+                owner_id: { type: string, format: uuid }
+                start_date: { type: string, format: date }
+                end_date: { type: string, format: date }
+      responses:
+        '200':
+          description: Updated project
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { data: { $ref: '#/components/schemas/Project' } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Projects]
+      summary: Delete a project (project_manager+)
+      description: Cascades to deliverables, dependencies, budget, and assignments.
+      responses:
+        '204': { description: Deleted }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # --- Deliverables --------------------------------------------------------
+  /projects-service/projects/{project_id}/deliverables:
+    parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Deliverables]
+      summary: List deliverables for a project
+      parameters:
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/DeliverableStatus' }
+        - name: search
+          in: query
+          schema: { type: string }
+        - $ref: '#/components/parameters/SortParam'
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PageSizeParam'
+      responses:
+        '200':
+          description: List of deliverables
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Deliverable' } }
+                  meta: { $ref: '#/components/schemas/PaginationMeta' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Deliverables]
+      summary: Create a deliverable under a project (team_lead+)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                description: { type: string }
+                status: { $ref: '#/components/schemas/DeliverableStatus' }
+                owner_id: { type: string, format: uuid }
+                due_date: { type: string, format: date }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { data: { $ref: '#/components/schemas/Deliverable' } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /projects-service/deliverables/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Deliverables]
+      summary: Get a deliverable's detail, including its dependency edges
+      responses:
+        '200':
+          description: Deliverable detail
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { data: { $ref: '#/components/schemas/Deliverable' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Deliverables]
+      summary: Update a deliverable
+      description: >
+        admin/project_manager/team_lead may update name/description/status/
+        owner_id/due_date; developer may only update status. completed_at is
+        derived automatically and is never client-settable.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                description: { type: string }
+                status: { $ref: '#/components/schemas/DeliverableStatus' }
+                owner_id: { type: string, format: uuid }
+                due_date: { type: string, format: date }
+      responses:
+        '200':
+          description: Updated deliverable
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { data: { $ref: '#/components/schemas/Deliverable' } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Deliverables]
+      summary: Delete a deliverable (team_lead+)
+      description: Cascades to its dependency edges.
+      responses:
+        '204': { description: Deleted }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # --- Dependencies ----------------------------------------------------------
+  /projects-service/dependencies:
+    post:
+      tags: [Dependencies]
+      summary: Link two deliverables with a dependency edge (team_lead+)
+      description: >
+        Only catches the direct A-depends-on-B-depends-on-A cycle case, not
+        longer N-length cycles.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [deliverable_id, depends_on_deliverable_id]
+              properties:
+                deliverable_id: { type: string, format: uuid }
+                depends_on_deliverable_id: { type: string, format: uuid }
+                dependency_type: { $ref: '#/components/schemas/DependencyType' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { data: { $ref: '#/components/schemas/Dependency' } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /projects-service/dependencies/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [Dependencies]
+      summary: Unlink a dependency edge (team_lead+)
+      responses:
+        '204': { description: Deleted }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # --- Resources ---------------------------------------------------------
+  /resources-service/resources:
+    get:
+      tags: [Resources]
+      summary: Browse team members with their current computed allocation
+      parameters:
+        - name: role
+          in: query
+          schema: { $ref: '#/components/schemas/Role' }
+        - name: search
+          in: query
+          schema: { type: string }
+        - name: is_active
+          in: query
+          schema: { type: boolean }
+        - $ref: '#/components/parameters/SortParam'
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PageSizeParam'
+      responses:
+        '200':
+          description: List of resources
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Resource' } }
+                  meta: { $ref: '#/components/schemas/PaginationMeta' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /resources-service/resources/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Resources]
+      summary: A team member's profile plus their current allocation and assignments
+      responses:
+        '200':
+          description: Resource detail
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    allOf:
+                      - $ref: '#/components/schemas/Resource'
+                      - type: object
+                        properties:
+                          assignments:
+                            type: array
+                            items: { $ref: '#/components/schemas/Assignment' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /resources-service/workload:
+    get:
+      tags: [Resources]
+      summary: Team-wide allocation snapshot for the dashboard
+      description: Only active users are included.
+      responses:
+        '200':
+          description: Workload snapshot
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      resources:
+                        type: array
+                        items: { $ref: '#/components/schemas/Resource' }
+                      summary:
+                        type: object
+                        properties:
+                          total_resources: { type: integer }
+                          overallocated_count: { type: integer }
+                          underallocated_count: { type: integer, description: "< 50% allocated" }
+                          average_allocation_percent: { type: number }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  # --- Assignments ---------------------------------------------------------
+  /resources-service/assignments:
+    get:
+      tags: [Assignments]
+      summary: List assignments
+      parameters:
+        - name: project_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: user_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: deliverable_id
+          in: query
+          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/SortParam'
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PageSizeParam'
+      responses:
+        '200':
+          description: List of assignments
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Assignment' } }
+                  meta: { $ref: '#/components/schemas/PaginationMeta' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+    post:
+      tags: [Assignments]
+      summary: Assign a user to a project, optionally a specific deliverable (team_lead+)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [project_id, user_id]
+              properties:
+                project_id: { type: string, format: uuid }
+                user_id: { type: string, format: uuid }
+                deliverable_id: { type: string, format: uuid }
+                allocation_percent: { type: integer, minimum: 1, maximum: 100, default: 100 }
+                role_on_project: { type: string }
+                start_date: { type: string, format: date }
+                end_date: { type: string, format: date }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { data: { $ref: '#/components/schemas/Assignment' } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /resources-service/assignments/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Assignments]
+      summary: Get a single assignment's detail
+      responses:
+        '200':
+          description: Assignment detail
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { data: { $ref: '#/components/schemas/Assignment' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Assignments]
+      summary: Update an assignment's deliverable/allocation/role/dates (team_lead+)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                deliverable_id: { type: string, format: uuid }
+                allocation_percent: { type: integer, minimum: 1, maximum: 100 }
+                role_on_project: { type: string }
+                start_date: { type: string, format: date }
+                end_date: { type: string, format: date }
+      responses:
+        '200':
+          description: Updated assignment
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { data: { $ref: '#/components/schemas/Assignment' } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Assignments]
+      summary: Remove an assignment (team_lead+)
+      responses:
+        '204': { description: Deleted }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # --- Budgets -------------------------------------------------------------
+  /budgets-service/budgets/summary:
+    get:
+      tags: [Budgets]
+      summary: Aggregate planned vs. spent totals, plus breakdowns by project and category
+      responses:
+        '200':
+          description: Budget summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      total_planned: { type: number }
+                      total_spent: { type: number }
+                      overall_percent_used: { type: number, nullable: true }
+                      by_project:
+                        type: array
+                        items: { $ref: '#/components/schemas/Budget' }
+                      by_category:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            category: { type: string }
+                            total: { type: number }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /budgets-service/budgets:
+    get:
+      tags: [Budgets]
+      summary: List budgets
+      parameters:
+        - name: project_id
+          in: query
+          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/SortParam'
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PageSizeParam'
+      responses:
+        '200':
+          description: List of budgets
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Budget' } }
+                  meta: { $ref: '#/components/schemas/PaginationMeta' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+    post:
+      tags: [Budgets]
+      summary: Set a project's planned budget (project_manager+)
+      description: One budget per project.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [project_id, planned_amount]
+              properties:
+                project_id: { type: string, format: uuid }
+                planned_amount: { type: number, minimum: 0 }
+                currency: { type: string, example: USD, default: USD }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { data: { $ref: '#/components/schemas/Budget' } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /budgets-service/budgets/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Budgets]
+      summary: Get a budget with spent/remaining/percent_used
+      responses:
+        '200':
+          description: Budget detail
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { data: { $ref: '#/components/schemas/Budget' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Budgets]
+      summary: Update planned_amount and/or currency (project_manager+)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                planned_amount: { type: number, minimum: 0 }
+                currency: { type: string }
+      responses:
+        '200':
+          description: Updated budget
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { data: { $ref: '#/components/schemas/Budget' } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Budgets]
+      summary: Remove a budget and its spend entries (admin only)
+      description: Restricted to admin because it wipes spend history.
+      responses:
+        '204': { description: Deleted }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /budgets-service/budgets/{budget_id}/entries:
+    parameters:
+      - name: budget_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Budgets]
+      summary: List spend entries for a budget
+      parameters:
+        - name: category
+          in: query
+          schema: { type: string }
+        - $ref: '#/components/parameters/SortParam'
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PageSizeParam'
+      responses:
+        '200':
+          description: List of entries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/BudgetEntry' } }
+                  meta: { $ref: '#/components/schemas/PaginationMeta' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Budgets]
+      summary: Record a spend entry against a budget (project_manager+)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [category, amount]
+              properties:
+                category: { type: string }
+                amount: { type: number, minimum: 0 }
+                description: { type: string }
+                entry_date: { type: string, format: date, description: Defaults to today if omitted. }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { data: { $ref: '#/components/schemas/BudgetEntry' } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /budgets-service/entries/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [Budgets]
+      summary: Remove a single spend entry (project_manager+)
+      responses:
+        '204': { description: Deleted }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }

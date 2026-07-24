@@ -81,6 +81,7 @@ DEVELOPER_UPDATABLE_DELIVERABLE_FIELDS = {"status"}
 
 
 def _with_completion(row: dict) -> dict:
+    """Adds completion_percent to a project row already carrying deliverable_count/completed_count."""
     total = row.get("deliverable_count") or 0
     completed = row.get("completed_count") or 0
     row["completion_percent"] = round((completed / total) * 100) if total else 0
@@ -102,6 +103,21 @@ def _with_budget_summary(row: dict) -> dict:
 
 
 def list_projects(headers, query, **_):
+    """GET /projects - lists projects, each with owner name, deliverable counts, and delay status.
+
+    Args:
+        headers: Request headers; must carry a valid bearer access token.
+        query: Optional "status", "risk_level", "owner_id", "search" (matches
+            name), "delayed" ("true" to filter to overdue, non-terminal
+            projects), "sort" (see PROJECT_SORT_COLUMNS), "page", "page_size".
+
+    Returns:
+        200 with a list of projects (each with completion_percent) and pagination meta.
+
+    Raises:
+        AuthError: Missing/invalid bearer token.
+        ValidationError: An invalid "status"/"risk_level"/"owner_id"/"sort" value was supplied.
+    """
     auth_lib.get_current_user(headers)
 
     pagination = parse_pagination(query)
@@ -165,6 +181,22 @@ def list_projects(headers, query, **_):
 
 
 def create_project(body, headers, **_):
+    """POST /projects - creates a project (project_manager+).
+
+    Args:
+        body: {"name", "description"?, "status"? (default "planning"),
+            "risk_level"? (default "low"), "owner_id"?, "start_date"?,
+            "end_date"? (YYYY-MM-DD)}.
+        headers: Request headers; caller must be project_manager or higher.
+
+    Returns:
+        201 with the created project.
+
+    Raises:
+        ValidationError: "name" is missing/blank, a field value is invalid,
+            "owner_id" doesn't reference an existing user, or end_date precedes start_date.
+        AuthError/ForbiddenError: Caller isn't project_manager+.
+    """
     current = auth_lib.get_current_user(headers)
     auth_lib.require_min_role(current, "project_manager")
 
@@ -196,6 +228,21 @@ def create_project(body, headers, **_):
 
 
 def get_project(id, headers, **_):
+    """GET /projects/{id} - fetches a project's detail, including completion % and budget summary.
+
+    Args:
+        id: Project UUID (path parameter).
+        headers: Request headers; must carry a valid bearer access token.
+
+    Returns:
+        200 with the project detail. Includes remaining_amount/percent_used
+        alongside planned/spent amounts when the project has a budget.
+
+    Raises:
+        ValidationError: "id" is not a valid UUID.
+        AuthError: Missing/invalid bearer token.
+        NotFoundError: No project with that id.
+    """
     auth_lib.get_current_user(headers)
     project_id = validate_uuid(id, "id")
 
@@ -220,6 +267,22 @@ def get_project(id, headers, **_):
 
 
 def update_project(id, body, headers, **_):
+    """PATCH /projects/{id} - updates a project (project_manager+).
+
+    Args:
+        id: Project UUID (path parameter).
+        body: Any of PROJECT_UPDATABLE_FIELDS; other keys are ignored.
+        headers: Request headers; caller must be project_manager or higher.
+
+    Returns:
+        200 with the updated project.
+
+    Raises:
+        ValidationError: "id" invalid, no updatable fields given, a field
+            value is invalid, "owner_id" doesn't exist, or end_date precedes start_date.
+        AuthError/ForbiddenError: Caller isn't project_manager+.
+        NotFoundError: No project with that id.
+    """
     current = auth_lib.get_current_user(headers)
     auth_lib.require_min_role(current, "project_manager")
     project_id = validate_uuid(id, "id")
@@ -261,6 +324,23 @@ def update_project(id, body, headers, **_):
 
 
 def delete_project(id, headers, **_):
+    """DELETE /projects/{id} - deletes a project (project_manager+).
+
+    Deleting a project cascades (via DB foreign keys) to its deliverables,
+    dependencies, budget, and assignments.
+
+    Args:
+        id: Project UUID (path parameter).
+        headers: Request headers; caller must be project_manager or higher.
+
+    Returns:
+        204 No Content.
+
+    Raises:
+        ValidationError: "id" is not a valid UUID.
+        AuthError/ForbiddenError: Caller isn't project_manager+.
+        NotFoundError: No project with that id.
+    """
     current = auth_lib.get_current_user(headers)
     auth_lib.require_min_role(current, "project_manager")
     project_id = validate_uuid(id, "id")
@@ -278,6 +358,22 @@ def delete_project(id, headers, **_):
 
 
 def list_deliverables(project_id, headers, query, **_):
+    """GET /projects/{project_id}/deliverables - lists deliverables for a project.
+
+    Args:
+        project_id: Project UUID (path parameter).
+        headers: Request headers; must carry a valid bearer access token.
+        query: Optional "status" filter, "search" (matches name), "sort"
+            (see DELIVERABLE_SORT_COLUMNS), "page", "page_size".
+
+    Returns:
+        200 with a list of deliverables (each with owner_name) and pagination meta.
+
+    Raises:
+        ValidationError: "project_id"/"status"/"sort" invalid.
+        AuthError: Missing/invalid bearer token.
+        NotFoundError: No project with that id.
+    """
     auth_lib.get_current_user(headers)
     proj_id = validate_uuid(project_id, "project_id")
 
@@ -321,6 +417,23 @@ def list_deliverables(project_id, headers, query, **_):
 
 
 def create_deliverable(project_id, body, headers, **_):
+    """POST /projects/{project_id}/deliverables - creates a deliverable under a project (team_lead+).
+
+    Args:
+        project_id: Project UUID (path parameter).
+        body: {"name", "description"?, "status"? (default "not_started"),
+            "owner_id"?, "due_date"? (YYYY-MM-DD)}.
+        headers: Request headers; caller must be team_lead or higher.
+
+    Returns:
+        201 with the created deliverable.
+
+    Raises:
+        ValidationError: "name" missing/blank, a field value invalid, or
+            "owner_id" doesn't reference an existing user.
+        AuthError/ForbiddenError: Caller isn't team_lead+.
+        NotFoundError: No project with that id.
+    """
     current = auth_lib.get_current_user(headers)
     auth_lib.require_min_role(current, "team_lead")
     proj_id = validate_uuid(project_id, "project_id")
@@ -368,6 +481,21 @@ def _dependency_side(cur, deliverable_id: str, match_column: str, other_column: 
 
 
 def get_deliverable(id, headers, **_):
+    """GET /deliverables/{id} - fetches a deliverable's detail, including its dependency edges.
+
+    Args:
+        id: Deliverable UUID (path parameter).
+        headers: Request headers; must carry a valid bearer access token.
+
+    Returns:
+        200 with the deliverable, plus "blocked_by" (deliverables this one
+        depends on) and "blocking" (deliverables that depend on this one).
+
+    Raises:
+        ValidationError: "id" is not a valid UUID.
+        AuthError: Missing/invalid bearer token.
+        NotFoundError: No deliverable with that id.
+    """
     auth_lib.get_current_user(headers)
     deliverable_id = validate_uuid(id, "id")
 
@@ -389,6 +517,27 @@ def get_deliverable(id, headers, **_):
 
 
 def update_deliverable(id, body, headers, **_):
+    """PATCH /deliverables/{id} - updates a deliverable.
+
+    admin/project_manager/team_lead may update name/description/status/owner_id/
+    due_date; developer may only update status (progress reporting).
+    completed_at is derived automatically: set to now() when status becomes
+    "completed", cleared whenever status changes away from it - never client-settable.
+
+    Args:
+        id: Deliverable UUID (path parameter).
+        body: Fields to update, restricted to the caller's allowed field set.
+        headers: Request headers; must carry a valid bearer access token.
+
+    Returns:
+        200 with the updated deliverable.
+
+    Raises:
+        ValidationError: "id" invalid, no updatable fields given, a field
+            value is invalid, or "owner_id" doesn't reference an existing user.
+        AuthError/ForbiddenError: Caller's role can't update deliverables at all.
+        NotFoundError: No deliverable with that id.
+    """
     current = auth_lib.get_current_user(headers)
     deliverable_id = validate_uuid(id, "id")
 
@@ -436,6 +585,20 @@ def update_deliverable(id, body, headers, **_):
 
 
 def delete_deliverable(id, headers, **_):
+    """DELETE /deliverables/{id} - deletes a deliverable and (via cascade) its dependency edges (team_lead+).
+
+    Args:
+        id: Deliverable UUID (path parameter).
+        headers: Request headers; caller must be team_lead or higher.
+
+    Returns:
+        204 No Content.
+
+    Raises:
+        ValidationError: "id" is not a valid UUID.
+        AuthError/ForbiddenError: Caller isn't team_lead+.
+        NotFoundError: No deliverable with that id.
+    """
     current = auth_lib.get_current_user(headers)
     auth_lib.require_min_role(current, "team_lead")
     deliverable_id = validate_uuid(id, "id")
@@ -453,6 +616,26 @@ def delete_deliverable(id, headers, **_):
 
 
 def create_dependency(body, headers, **_):
+    """POST /dependencies - links two deliverables with a dependency edge (team_lead+).
+
+    Only catches the direct A-depends-on-B-depends-on-A cycle case, not
+    longer N-length cycles - a documented simplification, not full graph
+    cycle detection.
+
+    Args:
+        body: {"deliverable_id", "depends_on_deliverable_id",
+            "dependency_type"? ("blocks" or "related", default "blocks")}.
+        headers: Request headers; caller must be team_lead or higher.
+
+    Returns:
+        201 with the created dependency.
+
+    Raises:
+        ValidationError: A required field is missing/invalid, a deliverable
+            depends on itself, or either id doesn't exist.
+        AuthError/ForbiddenError: Caller isn't team_lead+.
+        ConflictError: This would create a direct circular dependency, or the edge already exists.
+    """
     current = auth_lib.get_current_user(headers)
     auth_lib.require_min_role(current, "team_lead")
 
@@ -491,6 +674,20 @@ def create_dependency(body, headers, **_):
 
 
 def delete_dependency(id, headers, **_):
+    """DELETE /dependencies/{id} - unlinks a dependency edge between two deliverables (team_lead+).
+
+    Args:
+        id: Dependency UUID (path parameter).
+        headers: Request headers; caller must be team_lead or higher.
+
+    Returns:
+        204 No Content.
+
+    Raises:
+        ValidationError: "id" is not a valid UUID.
+        AuthError/ForbiddenError: Caller isn't team_lead+.
+        NotFoundError: No dependency with that id.
+    """
     current = auth_lib.get_current_user(headers)
     auth_lib.require_min_role(current, "team_lead")
     dependency_id = validate_uuid(id, "id")
@@ -508,6 +705,19 @@ def delete_dependency(id, headers, **_):
 
 
 def dashboard_summary(headers, **_):
+    """GET /dashboard/summary - portfolio-wide health aggregate for the dashboard.
+
+    Args:
+        headers: Request headers; must carry a valid bearer access token.
+
+    Returns:
+        200 with total/by-status/by-risk project counts, delayed project
+        count, deliverable completion totals/percent, aggregate budget
+        planned/spent, and up to 10 upcoming (next 14 days, non-completed) deadlines.
+
+    Raises:
+        AuthError: Missing/invalid bearer token.
+    """
     auth_lib.get_current_user(headers)
 
     with transaction() as cur:
@@ -577,6 +787,16 @@ router.add("DELETE", "/dependencies/{id}", delete_dependency)
 
 
 def handler(event=None, context=None):
+    """Lambda Function URL entry point - parses the event, dispatches to a route, and always returns a response.
+
+    Args:
+        event: The raw Lambda Function URL event (API Gateway HTTP API v2.0 shape).
+        context: The Lambda context object (unused).
+
+    Returns:
+        A Lambda Function URL response dict. Never raises - any exception is
+        converted to an error response by error_response().
+    """
     try:
         parsed = parse_event(event or {}, SERVICE_NAME)
         return router.dispatch(

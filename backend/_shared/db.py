@@ -14,6 +14,14 @@ _CONNECTION = None
 
 
 def _build_conninfo() -> str:
+    """Builds a psycopg conninfo string from POSTGRES_* env vars.
+
+    Requires TLS (sslmode=require) whenever IS_LOCAL is not "true", i.e. for
+    every non-local (Aurora) target.
+
+    Returns:
+        A space-separated libpq connection string.
+    """
     is_local = os.getenv("IS_LOCAL", "true") == "true"
     parts = [
         f"host={os.getenv('POSTGRES_HOST', 'localhost')}",

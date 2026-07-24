@@ -28,6 +28,7 @@ class JsonEncoder(json.JSONEncoder):
     """Serializes the UUID / date / Decimal types psycopg returns from PostgreSQL."""
 
     def default(self, obj):
+        """Converts a value json.dumps can't handle natively into a JSON-safe one."""
         if isinstance(obj, UUID):
             return str(obj)
         if isinstance(obj, (datetime, date)):
@@ -71,6 +72,16 @@ def parse_event(event: dict, service_name: str) -> dict:
 
 
 def success(data=None, status_code: int = 200, meta: dict | None = None) -> dict:
+    """Builds a Lambda Function URL response with a standard {"data": ...} envelope.
+
+    Args:
+        data: JSON-serializable payload to return (dict, list, or None for empty).
+        status_code: HTTP status code to respond with.
+        meta: Optional metadata (e.g. pagination info) included alongside data.
+
+    Returns:
+        A Lambda Function URL response dict (statusCode/headers/body).
+    """
     payload = {"data": data}
     if meta is not None:
         payload["meta"] = meta
@@ -87,6 +98,18 @@ def no_content() -> dict:
 
 
 def error_response(err: Exception) -> dict:
+    """Converts a raised exception into a Lambda Function URL error response.
+
+    Known ApiError subclasses (see errors.py) map to their declared status code
+    and message. Any other exception is logged with a full traceback and
+    surfaced to the caller as a generic 500, so internals never leak.
+
+    Args:
+        err: The exception caught at the handler's top-level try/except.
+
+    Returns:
+        A Lambda Function URL response dict (statusCode/headers/body).
+    """
     if isinstance(err, ApiError):
         logger.warning("API error (%s): %s", err.status_code, err.message)
         payload = {"error": {"message": err.message}}

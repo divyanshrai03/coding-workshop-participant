@@ -19,6 +19,7 @@ MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
 
 def _ensure_tracking_table(cur) -> None:
+    """Creates the schema_migrations tracking table if it doesn't already exist."""
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -31,11 +32,22 @@ def _ensure_tracking_table(cur) -> None:
 
 
 def _applied_versions(cur) -> dict:
+    """Returns {version: checksum} for every migration already recorded as applied."""
     cur.execute("SELECT version, checksum FROM schema_migrations")
     return {row["version"]: row["checksum"] for row in cur.fetchall()}
 
 
 def run() -> None:
+    """Applies every pending *.sql file in migrations/, in filename order.
+
+    Idempotent: migrations already recorded in schema_migrations are skipped.
+    Each migration runs and records itself in a single transaction.
+
+    Raises:
+        SystemExit: An already-applied migration's file contents no longer
+            match its recorded checksum (refuses to continue rather than
+            silently re-running or ignoring a changed migration).
+    """
     files = sorted(MIGRATIONS_DIR.glob("*.sql"))
     if not files:
         logger.warning("No migration files found in %s", MIGRATIONS_DIR)

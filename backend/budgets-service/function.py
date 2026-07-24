@@ -57,6 +57,17 @@ _SUMMARY_BREAKDOWN_LIMIT = 50
 
 
 def _validate_currency(value) -> str:
+    """Normalizes and validates a currency code, defaulting to USD.
+
+    Args:
+        value: The candidate currency code, or None/'' to default to "USD".
+
+    Returns:
+        A 3-letter uppercase currency code.
+
+    Raises:
+        ValidationError: value isn't exactly 3 alphabetic characters.
+    """
     currency = (value or "USD").strip().upper()
     if len(currency) != 3 or not currency.isalpha():
         raise ValidationError("'currency' must be a 3-letter currency code")
@@ -64,6 +75,7 @@ def _validate_currency(value) -> str:
 
 
 def _with_budget_math(row: dict) -> dict:
+    """Adds remaining_amount and percent_used to a budget row already carrying spent_amount."""
     planned = row.get("planned_amount") or Decimal(0)
     spent = row.get("spent_amount") or Decimal(0)
     row["remaining_amount"] = planned - spent
@@ -75,6 +87,19 @@ def _with_budget_math(row: dict) -> dict:
 
 
 def list_budgets(headers, query, **_):
+    """GET /budgets - lists budgets, each with spent_amount/remaining_amount/percent_used.
+
+    Args:
+        headers: Request headers; must carry a valid bearer access token.
+        query: Optional "project_id" filter, "sort" (see BUDGET_SORT_COLUMNS), "page", "page_size".
+
+    Returns:
+        200 with a list of budgets and pagination meta.
+
+    Raises:
+        AuthError: Missing/invalid bearer token.
+        ValidationError: An invalid "project_id" or "sort" value was supplied.
+    """
     auth_lib.get_current_user(headers)
 
     pagination = parse_pagination(query)
@@ -110,6 +135,20 @@ def list_budgets(headers, query, **_):
 
 
 def create_budget(body, headers, **_):
+    """POST /budgets - sets a project's planned budget (project_manager+). One budget per project.
+
+    Args:
+        body: {"project_id", "planned_amount" (>= 0), "currency"? (3-letter code, default USD)}.
+        headers: Request headers; caller must be project_manager or higher.
+
+    Returns:
+        201 with the created budget.
+
+    Raises:
+        ValidationError: A required field is missing/invalid, or "project_id" doesn't exist.
+        AuthError/ForbiddenError: Caller isn't project_manager+.
+        ConflictError: The project already has a budget.
+    """
     current = auth_lib.get_current_user(headers)
     auth_lib.require_min_role(current, "project_manager")
 
@@ -138,6 +177,20 @@ def create_budget(body, headers, **_):
 
 
 def get_budget(id, headers, **_):
+    """GET /budgets/{id} - fetches a budget with spent/remaining/percent_used.
+
+    Args:
+        id: Budget UUID (path parameter).
+        headers: Request headers; must carry a valid bearer access token.
+
+    Returns:
+        200 with the budget detail.
+
+    Raises:
+        ValidationError: "id" is not a valid UUID.
+        AuthError: Missing/invalid bearer token.
+        NotFoundError: No budget with that id.
+    """
     auth_lib.get_current_user(headers)
     budget_id = validate_uuid(id, "id")
 
@@ -157,6 +210,21 @@ def get_budget(id, headers, **_):
 
 
 def update_budget(id, body, headers, **_):
+    """PATCH /budgets/{id} - updates planned_amount and/or currency (project_manager+).
+
+    Args:
+        id: Budget UUID (path parameter).
+        body: Any of BUDGET_UPDATABLE_FIELDS ("planned_amount", "currency"); other keys are ignored.
+        headers: Request headers; caller must be project_manager or higher.
+
+    Returns:
+        200 with the updated budget.
+
+    Raises:
+        ValidationError: "id" invalid, no updatable fields given, or a field value is invalid.
+        AuthError/ForbiddenError: Caller isn't project_manager+.
+        NotFoundError: No budget with that id.
+    """
     current = auth_lib.get_current_user(headers)
     auth_lib.require_min_role(current, "project_manager")
     budget_id = validate_uuid(id, "id")
@@ -195,6 +263,23 @@ def update_budget(id, body, headers, **_):
 
 
 def delete_budget(id, headers, **_):
+    """DELETE /budgets/{id} - removes a budget and (via cascade) its spend entries. Admin only.
+
+    Restricted to admin because it wipes spend history, unlike day-to-day
+    planning/entry management which only requires project_manager+.
+
+    Args:
+        id: Budget UUID (path parameter).
+        headers: Request headers; caller must be an authenticated admin.
+
+    Returns:
+        204 No Content.
+
+    Raises:
+        ValidationError: "id" is not a valid UUID.
+        AuthError/ForbiddenError: Caller isn't an authenticated admin.
+        NotFoundError: No budget with that id.
+    """
     current = auth_lib.get_current_user(headers)
     auth_lib.require_role(current, "admin")
     budget_id = validate_uuid(id, "id")
@@ -212,6 +297,21 @@ def delete_budget(id, headers, **_):
 
 
 def list_entries(budget_id, headers, query, **_):
+    """GET /budgets/{budget_id}/entries - lists spend entries for a budget.
+
+    Args:
+        budget_id: Budget UUID (path parameter).
+        headers: Request headers; must carry a valid bearer access token.
+        query: Optional "category" filter, "sort" (see ENTRY_SORT_COLUMNS), "page", "page_size".
+
+    Returns:
+        200 with a list of entries and pagination meta.
+
+    Raises:
+        ValidationError: "budget_id"/"sort" invalid.
+        AuthError: Missing/invalid bearer token.
+        NotFoundError: No budget with that id.
+    """
     auth_lib.get_current_user(headers)
     b_id = validate_uuid(budget_id, "budget_id")
 
@@ -247,6 +347,22 @@ def list_entries(budget_id, headers, query, **_):
 
 
 def create_entry(budget_id, body, headers, **_):
+    """POST /budgets/{budget_id}/entries - records a spend entry against a budget (project_manager+).
+
+    Args:
+        budget_id: Budget UUID (path parameter).
+        body: {"category", "amount" (>= 0), "description"?, "entry_date"? (YYYY-MM-DD,
+            defaults to today if omitted)}.
+        headers: Request headers; caller must be project_manager or higher.
+
+    Returns:
+        201 with the created entry.
+
+    Raises:
+        ValidationError: A required field is missing/invalid, or "category" is blank.
+        AuthError/ForbiddenError: Caller isn't project_manager+.
+        NotFoundError: No budget with that id.
+    """
     current = auth_lib.get_current_user(headers)
     auth_lib.require_min_role(current, "project_manager")
     b_id = validate_uuid(budget_id, "budget_id")
@@ -279,6 +395,20 @@ def create_entry(budget_id, body, headers, **_):
 
 
 def delete_entry(id, headers, **_):
+    """DELETE /entries/{id} - removes a single spend entry (project_manager+).
+
+    Args:
+        id: Entry UUID (path parameter).
+        headers: Request headers; caller must be project_manager or higher.
+
+    Returns:
+        204 No Content.
+
+    Raises:
+        ValidationError: "id" is not a valid UUID.
+        AuthError/ForbiddenError: Caller isn't project_manager+.
+        NotFoundError: No entry with that id.
+    """
     current = auth_lib.get_current_user(headers)
     auth_lib.require_min_role(current, "project_manager")
     entry_id = validate_uuid(id, "id")
@@ -296,6 +426,20 @@ def delete_entry(id, headers, **_):
 
 
 def budgets_summary(headers, **_):
+    """GET /budgets/summary - aggregate planned vs. spent totals, plus breakdowns by project and category.
+
+    Per-project and per-category breakdowns are capped at
+    _SUMMARY_BREAKDOWN_LIMIT rows each, ordered by spend descending.
+
+    Args:
+        headers: Request headers; must carry a valid bearer access token.
+
+    Returns:
+        200 with {"total_planned", "total_spent", "overall_percent_used", "by_project", "by_category"}.
+
+    Raises:
+        AuthError: Missing/invalid bearer token.
+    """
     auth_lib.get_current_user(headers)
 
     with transaction() as cur:
@@ -345,6 +489,16 @@ router.add("DELETE", "/entries/{id}", delete_entry)
 
 
 def handler(event=None, context=None):
+    """Lambda Function URL entry point - parses the event, dispatches to a route, and always returns a response.
+
+    Args:
+        event: The raw Lambda Function URL event (API Gateway HTTP API v2.0 shape).
+        context: The Lambda context object (unused).
+
+    Returns:
+        A Lambda Function URL response dict. Never raises - any exception is
+        converted to an error response by error_response().
+    """
     try:
         parsed = parse_event(event or {}, SERVICE_NAME)
         return router.dispatch(

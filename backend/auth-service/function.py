@@ -40,10 +40,29 @@ ADMIN_UPDATABLE_FIELDS = SELF_UPDATABLE_FIELDS | {"role", "is_active"}
 
 
 def _public_user(user: dict) -> dict:
+    """Strips a user row down to the fields safe to return over the API (drops password_hash)."""
     return {field: user[field] for field in _PUBLIC_FIELDS if field in user}
 
 
 def register(body, headers, **_):
+    """POST /register - creates a user.
+
+    The very first user in the system bootstraps as 'admin' with no auth
+    required. Every subsequent registration requires an authenticated admin
+    caller and an explicit "role".
+
+    Args:
+        body: {"email", "password" (min 8 chars), "full_name", "role"? (ignored for the first user)}.
+        headers: Request headers; "authorization" is required once an admin already exists.
+
+    Returns:
+        201 with the created user (public fields only).
+
+    Raises:
+        ValidationError: A required field is missing, or the password is too short.
+        AuthError/ForbiddenError: Not the first user, and the caller isn't an authenticated admin.
+        ConflictError: A user with this email already exists.
+    """
     require_fields(body, "email", "password", "full_name")
     email = body["email"].strip().lower()
     password = body["password"]
@@ -78,6 +97,18 @@ def register(body, headers, **_):
 
 
 def login(body, **_):
+    """POST /login - exchanges email/password for an access + refresh token pair.
+
+    Args:
+        body: {"email", "password"}.
+
+    Returns:
+        200 with {"user", "access_token", "refresh_token"}.
+
+    Raises:
+        ValidationError: A required field is missing.
+        AuthError: No matching active user, or the password is wrong.
+    """
     require_fields(body, "email", "password")
     email = body["email"].strip().lower()
 
@@ -99,6 +130,18 @@ def login(body, **_):
 
 
 def refresh(body, **_):
+    """POST /refresh - exchanges a valid refresh token for a new access + refresh token pair.
+
+    Args:
+        body: {"refresh_token"}.
+
+    Returns:
+        200 with {"access_token", "refresh_token"}.
+
+    Raises:
+        ValidationError: "refresh_token" is missing.
+        AuthError: The token is expired/invalid/not a refresh token, or the user is deactivated.
+    """
     require_fields(body, "refresh_token")
     payload = auth_lib.decode_token(body["refresh_token"], expected_type="refresh")
 
@@ -116,6 +159,18 @@ def refresh(body, **_):
 
 
 def me(headers, **_):
+    """GET /me - returns the authenticated caller's own profile.
+
+    Args:
+        headers: Request headers; must carry a valid bearer access token.
+
+    Returns:
+        200 with the caller's user record (public fields only).
+
+    Raises:
+        AuthError: Missing/invalid bearer token.
+        NotFoundError: The token's subject no longer exists (e.g. deleted since issuance).
+    """
     current = auth_lib.get_current_user(headers)
     with transaction() as cur:
         cur.execute(f"SELECT {USER_COLUMNS} FROM users WHERE id = %s", (current["sub"],))  # nosec B608 - USER_COLUMNS is a fixed constant, not user input
@@ -127,6 +182,20 @@ def me(headers, **_):
 
 
 def list_users(headers, query, **_):
+    """GET /users - lists users, admin only. Paginated, sortable, filterable, searchable.
+
+    Args:
+        headers: Request headers; caller must be an authenticated admin.
+        query: Optional "role", "is_active" ("true"/"false"), "search" (matches
+            full_name/email), "sort" (see USER_SORT_COLUMNS), "page", "page_size".
+
+    Returns:
+        200 with a list of users (public fields only) and pagination meta.
+
+    Raises:
+        AuthError/ForbiddenError: Caller isn't an authenticated admin.
+        ValidationError: An invalid "role" or "sort" value was supplied.
+    """
     current = auth_lib.get_current_user(headers)
     auth_lib.require_role(current, "admin")
 
@@ -176,6 +245,20 @@ def list_users(headers, query, **_):
 
 
 def get_user(id, headers, **_):
+    """GET /users/{id} - fetches a user by id. Callers may fetch themselves; only admins may fetch others.
+
+    Args:
+        id: Target user's UUID (path parameter).
+        headers: Request headers; must carry a valid bearer access token.
+
+    Returns:
+        200 with the target user (public fields only).
+
+    Raises:
+        ValidationError: "id" is not a valid UUID.
+        AuthError/ForbiddenError: Caller isn't authenticated, or isn't self/admin.
+        NotFoundError: No user with that id.
+    """
     current = auth_lib.get_current_user(headers)
     user_id = validate_uuid(id, "id")
     if current["sub"] != user_id:
@@ -191,6 +274,25 @@ def get_user(id, headers, **_):
 
 
 def update_user(id, body, headers, **_):
+    """PATCH /users/{id} - updates a user.
+
+    Self may update full_name/capacity_hours_per_week. Admins may additionally
+    update role/is_active for any user (including others).
+
+    Args:
+        id: Target user's UUID (path parameter).
+        body: Fields to update - restricted to the caller's allowed field set;
+            any other keys are silently dropped.
+        headers: Request headers; must carry a valid bearer access token.
+
+    Returns:
+        200 with the updated user (public fields only).
+
+    Raises:
+        ValidationError: "id"/"role" invalid, or no updatable fields were provided.
+        AuthError/ForbiddenError: Caller isn't authenticated, or isn't self/admin.
+        NotFoundError: No user with that id.
+    """
     current = auth_lib.get_current_user(headers)
     user_id = validate_uuid(id, "id")
     is_self = current["sub"] == user_id
@@ -224,6 +326,24 @@ def update_user(id, body, headers, **_):
 
 
 def deactivate_user(id, headers, **_):
+    """DELETE /users/{id} - soft-deletes a user (sets is_active = FALSE), admin only.
+
+    This is a soft delete, not a row removal: the user stays in the table and
+    still counts toward "is this the first user" checks elsewhere. Admins
+    cannot deactivate their own account (to avoid locking themselves out).
+
+    Args:
+        id: Target user's UUID (path parameter).
+        headers: Request headers; caller must be an authenticated admin.
+
+    Returns:
+        204 No Content.
+
+    Raises:
+        ValidationError: "id" is not a valid UUID, or the caller targeted themselves.
+        AuthError/ForbiddenError: Caller isn't an authenticated admin.
+        NotFoundError: No user with that id.
+    """
     current = auth_lib.get_current_user(headers)
     auth_lib.require_role(current, "admin")
     user_id = validate_uuid(id, "id")
@@ -252,6 +372,16 @@ router.add("DELETE", "/users/{id}", deactivate_user)
 
 
 def handler(event=None, context=None):
+    """Lambda Function URL entry point - parses the event, dispatches to a route, and always returns a response.
+
+    Args:
+        event: The raw Lambda Function URL event (API Gateway HTTP API v2.0 shape).
+        context: The Lambda context object (unused).
+
+    Returns:
+        A Lambda Function URL response dict. Never raises - any exception is
+        converted to an error response by error_response().
+    """
     try:
         parsed = parse_event(event or {}, SERVICE_NAME)
         return router.dispatch(

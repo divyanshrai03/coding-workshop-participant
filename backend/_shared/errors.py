@@ -11,6 +11,10 @@ class ApiError(Exception):
     status_code = 500
 
     def __init__(self, message: str, details: dict | None = None):
+        """Args:
+            message: Human-readable error message returned to the API caller.
+            details: Optional structured context (e.g. which fields failed validation).
+        """
         super().__init__(message)
         self.message = message
         self.details = details

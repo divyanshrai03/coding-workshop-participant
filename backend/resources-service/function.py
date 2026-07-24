@@ -71,6 +71,7 @@ _ACTIVE_ALLOCATION_SUBQUERY = """(
 
 
 def _with_workload(row: dict) -> dict:
+    """Adds is_overallocated and allocated_hours_per_week to a resource row carrying total_allocation_percent."""
     allocation = row.get("total_allocation_percent") or 0
     capacity = row.get("capacity_hours_per_week")
     row["is_overallocated"] = allocation > 100
@@ -82,6 +83,21 @@ def _with_workload(row: dict) -> dict:
 
 
 def list_resources(headers, query, **_):
+    """GET /resources - browses team members with their current computed allocation.
+
+    Args:
+        headers: Request headers; must carry a valid bearer access token.
+        query: Optional "role", "search" (matches full_name/email), "is_active"
+            ("true" to filter to active only), "sort" (see RESOURCE_SORT_COLUMNS),
+            "page", "page_size".
+
+    Returns:
+        200 with a list of resources (each with allocation/workload fields) and pagination meta.
+
+    Raises:
+        AuthError: Missing/invalid bearer token.
+        ValidationError: An invalid "role" or "sort" value was supplied.
+    """
     auth_lib.get_current_user(headers)
 
     pagination = parse_pagination(query)
@@ -126,6 +142,20 @@ def list_resources(headers, query, **_):
 
 
 def get_resource(id, headers, **_):
+    """GET /resources/{id} - a team member's profile plus their current allocation and assignments.
+
+    Args:
+        id: User UUID (path parameter).
+        headers: Request headers; must carry a valid bearer access token.
+
+    Returns:
+        200 with the resource's profile, workload fields, and its assignments list.
+
+    Raises:
+        ValidationError: "id" is not a valid UUID.
+        AuthError: Missing/invalid bearer token.
+        NotFoundError: No user with that id.
+    """
     auth_lib.get_current_user(headers)
     user_id = validate_uuid(id, "id")
 
@@ -155,6 +185,19 @@ def get_resource(id, headers, **_):
 
 
 def workload(headers, **_):
+    """GET /workload - team-wide allocation snapshot for the dashboard.
+
+    Args:
+        headers: Request headers; must carry a valid bearer access token.
+
+    Returns:
+        200 with {"resources": [...], "summary": {total_resources,
+        overallocated_count, underallocated_count (<50%), average_allocation_percent}}.
+        Only active users are included.
+
+    Raises:
+        AuthError: Missing/invalid bearer token.
+    """
     auth_lib.get_current_user(headers)
 
     with transaction() as cur:
@@ -185,6 +228,7 @@ def workload(headers, **_):
 
 
 def _assignment_detail_query() -> str:
+    """Builds the shared SELECT (with project/deliverable/user names joined in) used by every assignment read endpoint."""
     # ASSIGNMENT_COLUMNS is a fixed constant; no user input reaches this string.
     return (
         f"SELECT {_ASSIGNMENT_COLUMNS_PREFIXED}, "  # nosec B608
@@ -197,6 +241,20 @@ def _assignment_detail_query() -> str:
 
 
 def list_assignments(headers, query, **_):
+    """GET /assignments - lists assignments, optionally filtered by project/user/deliverable.
+
+    Args:
+        headers: Request headers; must carry a valid bearer access token.
+        query: Optional "project_id", "user_id", "deliverable_id" filters,
+            "sort" (see ASSIGNMENT_SORT_COLUMNS), "page", "page_size".
+
+    Returns:
+        200 with a list of assignments (with project/deliverable/user names joined in) and pagination meta.
+
+    Raises:
+        AuthError: Missing/invalid bearer token.
+        ValidationError: An invalid filter UUID or "sort" value was supplied.
+    """
     auth_lib.get_current_user(headers)
 
     pagination = parse_pagination(query)
@@ -234,6 +292,21 @@ def list_assignments(headers, query, **_):
 
 
 def create_assignment(body, headers, **_):
+    """POST /assignments - assigns a user to a project (optionally a specific deliverable) (team_lead+).
+
+    Args:
+        body: {"project_id", "user_id", "deliverable_id"?, "allocation_percent"?
+            (1-100, default 100), "role_on_project"?, "start_date"?, "end_date"? (YYYY-MM-DD)}.
+        headers: Request headers; caller must be team_lead or higher.
+
+    Returns:
+        201 with the created assignment.
+
+    Raises:
+        ValidationError: A required field is missing/invalid, a referenced id
+            doesn't exist, or end_date precedes start_date.
+        AuthError/ForbiddenError: Caller isn't team_lead+.
+    """
     current = auth_lib.get_current_user(headers)
     auth_lib.require_min_role(current, "team_lead")
 
@@ -263,6 +336,20 @@ def create_assignment(body, headers, **_):
 
 
 def get_assignment(id, headers, **_):
+    """GET /assignments/{id} - fetches a single assignment's detail.
+
+    Args:
+        id: Assignment UUID (path parameter).
+        headers: Request headers; must carry a valid bearer access token.
+
+    Returns:
+        200 with the assignment detail.
+
+    Raises:
+        ValidationError: "id" is not a valid UUID.
+        AuthError: Missing/invalid bearer token.
+        NotFoundError: No assignment with that id.
+    """
     auth_lib.get_current_user(headers)
     assignment_id = validate_uuid(id, "id")
 
@@ -276,6 +363,22 @@ def get_assignment(id, headers, **_):
 
 
 def update_assignment(id, body, headers, **_):
+    """PATCH /assignments/{id} - updates an assignment's deliverable/allocation/role/dates (team_lead+).
+
+    Args:
+        id: Assignment UUID (path parameter).
+        body: Any of ASSIGNMENT_UPDATABLE_FIELDS; other keys are ignored.
+        headers: Request headers; caller must be team_lead or higher.
+
+    Returns:
+        200 with the updated assignment.
+
+    Raises:
+        ValidationError: "id" invalid, no updatable fields given, a field value
+            is invalid, "deliverable_id" doesn't exist, or end_date precedes start_date.
+        AuthError/ForbiddenError: Caller isn't team_lead+.
+        NotFoundError: No assignment with that id.
+    """
     current = auth_lib.get_current_user(headers)
     auth_lib.require_min_role(current, "team_lead")
     assignment_id = validate_uuid(id, "id")
@@ -315,6 +418,20 @@ def update_assignment(id, body, headers, **_):
 
 
 def delete_assignment(id, headers, **_):
+    """DELETE /assignments/{id} - removes an assignment (team_lead+).
+
+    Args:
+        id: Assignment UUID (path parameter).
+        headers: Request headers; caller must be team_lead or higher.
+
+    Returns:
+        204 No Content.
+
+    Raises:
+        ValidationError: "id" is not a valid UUID.
+        AuthError/ForbiddenError: Caller isn't team_lead+.
+        NotFoundError: No assignment with that id.
+    """
     current = auth_lib.get_current_user(headers)
     auth_lib.require_min_role(current, "team_lead")
     assignment_id = validate_uuid(id, "id")
@@ -340,6 +457,16 @@ router.add("DELETE", "/assignments/{id}", delete_assignment)
 
 
 def handler(event=None, context=None):
+    """Lambda Function URL entry point - parses the event, dispatches to a route, and always returns a response.
+
+    Args:
+        event: The raw Lambda Function URL event (API Gateway HTTP API v2.0 shape).
+        context: The Lambda context object (unused).
+
+    Returns:
+        A Lambda Function URL response dict. Never raises - any exception is
+        converted to an error response by error_response().
+    """
     try:
         parsed = parse_event(event or {}, SERVICE_NAME)
         return router.dispatch(
